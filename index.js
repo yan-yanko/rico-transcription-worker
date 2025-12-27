@@ -68,6 +68,53 @@ app.post("/transcribe", upload.single("file"), async (req, res) => {
   }
 });
 
+app.get("/transcribe/:operationId", async (req, res) => {
+  try {
+    const { operationId } = req.params;
+
+    const response = await fetch(
+      `https://speech.googleapis.com/v1/operations/${operationId}`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.GOOGLE_API_KEY}`,
+        },
+      }
+    );
+
+    const data = await response.json();
+
+    // עדיין בעיבוד
+    if (!data.done) {
+      return res.json({
+        status: "processing",
+      });
+    }
+
+    // הסתיים אבל נכשל
+    if (data.error) {
+      return res.status(500).json({
+        status: "failed",
+        error: data.error,
+      });
+    }
+
+    // הצלחה – חילוץ הטקסט
+    const transcript =
+      data.response.results
+        ?.map(r => r.alternatives?.[0]?.transcript)
+        .join(" ") || "";
+
+    res.json({
+      status: "completed",
+      transcript,
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch transcription result" });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("Transcription worker running on port", PORT);
