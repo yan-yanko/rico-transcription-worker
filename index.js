@@ -73,15 +73,17 @@ app.get("/transcribe/:operationId", async (req, res) => {
     const { operationId } = req.params;
 
     const response = await fetch(
-      `https://speech.googleapis.com/v1/operations/${operationId}`,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.GOOGLE_API_KEY}`,
-        },
-      }
+      `https://speech.googleapis.com/v1/operations/${operationId}?key=${process.env.GOOGLE_API_KEY}`
     );
 
     const data = await response.json();
+
+    if (!response.ok) {
+      return res.status(500).json({
+        status: "failed",
+        error: data,
+      });
+    }
 
     // עדיין בעיבוד
     if (!data.done) {
