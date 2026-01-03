@@ -1,15 +1,15 @@
 import express from "express";
 import multer from "multer";
 import fs from "fs";
-import { SpeechClient } from "@google-cloud/speech";
+import { v2 } from "@google-cloud/speech"; // ייבוא ישיר של גרסה v2
 import ffmpeg from "fluent-ffmpeg";
 
 /**
  * Rico Backend Worker
- * אסטרטגיה: Hebrew-First Transcription (V2 SDK)
+ * [cite_start]אסטרטגיה: Hebrew-First Transcription (V2 SDK) [cite: 3, 4]
  */
 
-// 1. הגדרת ה-Credentials מתוך משתנה הסביבה ב-Railway
+[cite_start]// 1. הגדרת ה-Credentials מתוך משתנה הסביבה ב-Railway [cite: 9]
 const credentialsJSON = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
 let clientOptions = {};
 
@@ -22,9 +22,8 @@ if (credentialsJSON) {
   }
 }
 
-// 2. יצירת הלקוח בגרסת V2 (נדרש עבור Recognizers ומודל latest_long)
-// נעשה שימוש ב-SpeechClient.v2 כפי שמוגדר ב-DRP
-const client = new SpeechClient.v2.SpeechClient(clientOptions);
+[cite_start]// 2. יצירת הלקוח בגרסת V2 כפי שמוגדר באסטרטגיית ה-DRP [cite: 9]
+const client = new v2.SpeechClient(clientOptions);
 
 const upload = multer({ dest: "/tmp" });
 const app = express();
@@ -47,7 +46,7 @@ function convertToWav(inputPath, outputPath) {
 
 /**
  * ה-Endpoint הראשי לתמלול
- * מקבל קובץ, ממיר אותו ושולח ל-Google Speech V2
+ * [cite_start]מקבל קובץ, ממיר אותו ושולח ל-Google Speech V2 [cite: 9]
  */
 app.post("/transcribe", upload.single("file"), async (req, res) => {
   try {
@@ -66,8 +65,8 @@ app.post("/transcribe", upload.single("file"), async (req, res) => {
     const response = await transcribeAudio(audioBytes);
     
     // ניקוי קבצים זמניים
-    fs.unlinkSync(inputPath);
-    fs.unlinkSync(wavPath);
+    if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+    if (fs.existsSync(wavPath)) fs.unlinkSync(wavPath);
 
     return res.json(response);
   } catch (err) {
@@ -86,20 +85,20 @@ app.listen(PORT, () => {
 
 /**
  * פונקציית הליבה לתמלול מול Google Cloud V2
- * משתמשת ב-Recognizer הייעודי: hebrew-long
+ * [cite_start]משתמשת ב-Recognizer הייעודי: hebrew-long [cite: 10]
  */
 async function transcribeAudio(audioBytes) {
   const request = {
-    // שימוש בנתיב ה-Recognizer המלא מה-DRP
+    [cite_start]// שימוש בנתיב ה-Recognizer המלא מה-DRP [cite: 10]
     recognizer: "projects/rico-482513/locations/global/recognizers/hebrew-long",
     config: {
       autoDecodingConfig: {},
       features: {
-        enableAutomaticPunctuation: true, // פיסוק אוטומטי [cite: 10]
-        enableWordTimeOffsets: true,     // Word-level timestamps [cite: 11]
+        [cite_start]enableAutomaticPunctuation: true, // פיסוק אוטומטי [cite: 11]
+        [cite_start]enableWordTimeOffsets: true,     // Word-level timestamps [cite: 12]
       },
       diarizationConfig: {
-        enableSpeakerDiarization: true, // זיהוי דוברים [cite: 12]
+        [cite_start]enableSpeakerDiarization: true, // זיהוי דוברים [cite: 13]
         minSpeakerCount: 2,
         maxSpeakerCount: 6,
       },
