@@ -16,39 +16,49 @@ app.post("/transcribe", upload.single("file"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "No file" });
 
-    const inputPath = req.file.path;
-    const wavPath = `${inputPath}.wav`;
+    const wavPath = `${req.file.path}.wav`;
 
-    // המרה ל-WAV
+    // המרה ל-WAV - מבטיח שגוגל יוכל לפענח את הקובץ בקלות
     await new Promise((resolve, reject) => {
-      ffmpeg(inputPath).audioChannels(1).audioFrequency(16000).format("wav").on("end", resolve).on("error", reject).save(wavPath);
+      ffmpeg(req.file.path).audioChannels(1).audioFrequency(16000).format("wav").on("end", resolve).on("error", reject).save(wavPath);
     });
 
     const audioBytes = fs.readFileSync(wavPath).toString("base64");
 
-    // תיקון קריטי ל-V2: כשמשתמשים ב-Recognizer מוכן, שולחים רק תוכן
-    // גוגל כבר יודע את ה-config מה-Recognizer hebrew-long
+    // התיקון לשגיאת decoding_config:
     const request = {
       recognizer: "projects/rico-482513/locations/global/recognizers/hebrew-long",
+      config: {
+        // ב-V2, חייבים להגדיר decoding_config מפורש או אוטומטי
+        autoDecodingConfig: {},
+      },
       content: audioBytes,
     };
 
-    console.log("Requesting transcription from V2 Recognizer...");
+    console.log("Sending to V2 Recognizer with autoDecodingConfig...");
     const [response] = await client.recognize(request);
 
-    // ניקוי
-    [inputPath, wavPath].forEach(p => fs.existsSync(p) && fs.unlinkSync(p));
+    // ניקוי קבצים
+    [req.file.path, wavPath].forEach(p => fs.existsSync(p) && fs.unlinkSync(p));
 
+    // הוספת Header כדי ש-Lovable יזהה שזה ה-Worker החדש (לפי הצעה 3 של לאבבל)
+    res.setHeader('X-Worker-Version', 'v2-strict-optimized');
     return res.json(response);
 
   } catch (err) {
-    console.error("GCP Error Details:", err);
+    console.error("GCP Detailed Error:", err);
     return res.status(500).json({
       error: "Worker Error",
-      message: err.message
+      message: err.message,
+      code: err.code
     });
   }
 });
 
+// Endpoint לבדיקת גרסה (לפי הצעה 3 של לאבבל)
+app.get("/version", (req, res) => {
+  res.json({ handler: "google-stt-v2-strict", status: "ready" });
+});
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => console.log(`Worker active on ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`Rico Worker v2.1 active on ${PORT}`));
