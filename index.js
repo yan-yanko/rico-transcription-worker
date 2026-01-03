@@ -2,6 +2,9 @@ import express from "express";
 import multer from "multer";
 import fs from "fs";
 import fetch from "node-fetch";
+import { SpeechClient } from "@google-cloud/speech";
+
+const client = new SpeechClient();
 import ffmpeg from "fluent-ffmpeg";
 
 const upload = multer({ dest: "/tmp" });
@@ -32,34 +35,10 @@ app.post("/transcribe", upload.single("file"), async (req, res) => {
 
     const audioBytes = fs.readFileSync(wavPath).toString("base64");
 
-    const response = await fetch(
-      `https://speech.googleapis.com/v1/speech:longrunningrecognize?key=${process.env.GOOGLE_API_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          config: {
-            encoding: "LINEAR16",
-            sampleRateHertz: 16000,
-            languageCode: "he-IL",
-            audioChannelCount: 1,
-            enableAutomaticPunctuation: true
-          },
-          audio: { content: audioBytes }
-        })
-      }
-    );
 
-    const data = await response.json();
+    const response = await transcribeAudio(audioBytes);
 
-    if (!response.ok) {
-      return res.status(500).json({ error: data });
-    }
-
-    return res.json({
-      status: "transcription_started",
-      operation: data.name
-    });
+    return res.json(response);
   } catch (err) {
     return res.status(500).json({
       error: "Transcription failed",
@@ -121,3 +100,26 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("Transcription worker running on port", PORT);
 });
+
+export async function transcribeAudio(audioBytes) {
+  const request = {
+    recognizer: "projects/rico-482513/locations/global/recognizers/hebrew-long",
+    config: {
+      autoDecodingConfig: {},
+      features: {
+        enableAutomaticPunctuation: true,
+        enableWordTimeOffsets: true,
+      },
+      diarizationConfig: {
+        enableSpeakerDiarization: true,
+        minSpeakerCount: 2,
+        maxSpeakerCount: 6,
+      },
+    },
+    content: audioBytes,
+  };
+
+  const [response] = await client.recognize(request);
+
+  return response;
+}
