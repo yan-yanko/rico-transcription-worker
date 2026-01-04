@@ -7,15 +7,11 @@ import ffmpeg from "fluent-ffmpeg";
 const app = express();
 app.use(express.json());
 
-// טעינת מפתח מגוגל - מתוך המשתנה ב-Railway
 const credentialsJSON = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
 const client = new v2.SpeechClient(credentialsJSON ? { credentials: JSON.parse(credentialsJSON) } : {});
 
 const upload = multer({ dest: "/tmp" });
 
-/**
- * פונקציית עזר להמרת אודיו לפורמט WAV תקני
- */
 function convertToWav(inputPath, outputPath) {
   return new Promise((resolve, reject) => {
     ffmpeg(inputPath)
@@ -28,42 +24,28 @@ function convertToWav(inputPath, outputPath) {
   });
 }
 
-/**
- * Endpoint הראשי - עבר לשימוש ב-LongRunningRecognize
- * זה מאפשר לעקוף את מגבלת ה-10MB של בקשות רגילות
- */
 app.post("/transcribe", upload.single("file"), async (req, res) => {
-  console.log("--- New Long-Running Request ---");
-
   try {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
-    const inputPath = req.file.path;
-    const wavPath = `${inputPath}.wav`;
-
-    console.log(`Processing file: ${req.file.originalname}`);
-    await convertToWav(inputPath, wavPath);
-
+    const wavPath = `${req.file.path}.wav`;
+    await convertToWav(req.file.path, wavPath);
     const audioBytes = fs.readFileSync(wavPath).toString("base64");
 
-    // הגדרת הבקשה לפי ה-DRP (V2, hebrew-long)
+    // ב-V2, עבור קבצים ארוכים משתמשים ב-batchRecognize
     const request = {
       recognizer: "projects/rico-482513/locations/global/recognizers/hebrew-long",
-      config: {
-        autoDecodingConfig: {},
-      },
+      // ב-batchRecognize שולחים תוכן דרך inlineBatchConfig
       content: audioBytes,
     };
 
-    console.log("Starting Long Running Operation (LRO)...");
+    console.log("Starting V2 Batch Recognition (LRO)...");
 
-    // שימוש בשיטה אסינכרונית - מחזירה אובייקט של הפעולה ולא את התוצאה הסופית מיד
-    const [operation] = await client.longRunningRecognize(request);
+    // זו הפונקציה הנכונה ב-V2 שמחזירה Operation
+    const [operation] = await client.batchRecognize(request);
 
-    // ניקוי קבצים זמניים
-    [inputPath, wavPath].forEach(p => fs.existsSync(p) && fs.unlinkSync(p));
+    [req.file.path, wavPath].forEach(p => fs.existsSync(p) && fs.unlinkSync(p));
 
-    // החזרת ה-Operation Name ללאבל כדי שיוכל לעשות Polling
     return res.json({
       operation: operation.name,
       status: "processing"
@@ -75,29 +57,21 @@ app.post("/transcribe", upload.single("file"), async (req, res) => {
   }
 });
 
-/**
- * Endpoint חדש לבדיקת סטטוס הפעולה
- * לאבבל ישתמש בזה כדי לדעת מתי התמלול הסתיים
- */
+// בדיקת סטטוס ב-V2
 app.get("/operation/:name*", async (req, res) => {
   try {
     const operationName = req.params.name + req.params[0];
-    const [operation] = await client.checkLongRunningRecognizeProgress(operationName);
+    // ב-V2 ניגשים לסטטוס דרך ה-operations client הכללי
+    const [operation] = await client.checkBatchRecognizeProgress(operationName);
 
     if (operation.done) {
       return res.json({ status: "completed", response: operation.response });
     }
-
-    res.json({ status: "processing", metadata: operation.metadata });
+    res.json({ status: "processing" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Endpoint לבדיקת גרסה עבור לאבבל
-app.get("/version", (req, res) => {
-  res.json({ handler: "google-stt-v2-lro", status: "ready" });
-});
-
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => console.log(`Rico LRO Worker active on ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`Rico V2-LRO Worker active on ${PORT}`));
