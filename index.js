@@ -44,7 +44,15 @@ app.post("/transcribe", upload.single("file"), async (req, res) => {
       recognitionOutputConfig: {
         inlineResponseConfig: {}
       },
-      processingStrategy: 'DYNAMIC_BATCHING'
+      processingStrategy: 'DYNAMIC_BATCHING',
+      recognitionConfig: {
+        features: {
+          diarizationConfig: {
+            minSpeakerCount: 2,
+            maxSpeakerCount: 5
+          }
+        }
+      }
     };
 
     console.log("Sending BatchRecognize request with explicit content source...");
