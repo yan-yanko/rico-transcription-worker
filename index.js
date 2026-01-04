@@ -25,7 +25,7 @@ function convertToWav(inputPath, outputPath) {
 }
 
 app.post("/transcribe", upload.single("file"), async (req, res) => {
-  console.log("--- Starting Batch Transcription Request ---");
+  console.log("--- Starting Batch Transcription (Final Protocol) ---");
 
   try {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
@@ -34,25 +34,26 @@ app.post("/transcribe", upload.single("file"), async (req, res) => {
     await convertToWav(req.file.path, wavPath);
     const audioBytes = fs.readFileSync(wavPath).toString("base64");
 
-    // תיקון קריטי: המבנה המדויק ש-BatchRecognize דורשת עבור Inline Content
+    // המבנה המדויק ל-BatchRecognize בגרסה V2
     const request = {
       recognizer: "projects/rico-482513/locations/global/recognizers/hebrew-long",
-      processingStrategy: 'DYNAMIC_BATCHING', // אופטימיזציה למהירות
       files: [
         {
-          content: audioBytes // שליחת התוכן ישירות בתוך מערך הקבצים
+          content: audioBytes
         }
       ],
-      // הגדרת קונפיגורציה בסיסית אם ה-Recognizer דורש זאת
-      recognitionConfig: {
-        autoDecodingConfig: {}
-      }
+      // פתרון השגיאה הנוכחית: הגדרת יעד הפלט כ-Inline
+      recognitionOutputConfig: {
+        inlineResponseConfig: {}
+      },
+      // הגדרות עיבוד נוספות למהירות ודיוק
+      processingStrategy: 'DYNAMIC_BATCHING'
     };
 
-    console.log("Sending BatchRecognize request to Google...");
+    console.log("Sending BatchRecognize with inlineResponseConfig...");
     const [operation] = await client.batchRecognize(request);
 
-    // ניקוי
+    // ניקוי קבצים
     [req.file.path, wavPath].forEach(p => fs.existsSync(p) && fs.unlinkSync(p));
 
     return res.json({
@@ -72,9 +73,14 @@ app.get("/operation/:name*", async (req, res) => {
     const [operation] = await client.checkBatchRecognizeProgress(operationName);
 
     if (operation.done) {
-      // ב-Batch V2 התוצאה נמצאת תחת results של הקובץ הראשון
-      const results = operation.response?.results || {};
-      return res.json({ status: "completed", response: results });
+      // ב-V2 Inline, התוצאה נמצאת בתוך inline_result של הקובץ הראשון
+      const results = operation.response?.results;
+      const firstFileResult = results ? Object.values(results)[0] : null;
+
+      return res.json({
+        status: "completed",
+        response: firstFileResult?.inlineResult || {}
+      });
     }
     res.json({ status: "processing" });
   } catch (err) {
@@ -83,4 +89,4 @@ app.get("/operation/:name*", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => console.log(`Rico Batch-Inline Worker active on ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`Rico Final V2 Worker active on ${PORT}`));
