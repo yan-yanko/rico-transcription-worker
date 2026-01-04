@@ -32,32 +32,31 @@ app.post("/transcribe", upload.single("file"), async (req, res) => {
     await convertToWav(req.file.path, wavPath);
     const audioBytes = fs.readFileSync(wavPath).toString("base64");
 
-    // תיקון קריטי לשגיאת "No audio source set":
-    // ב-V2 Batch, חובה שכל אובייקט במערך ה-files יכיל את השדה 'content'
     const request = {
       recognizer: "projects/rico-482513/locations/global/recognizers/hebrew-long",
       files: [
         {
-          content: audioBytes // זה מקור האודיו שגוגל חיפשה ולא מצאה
+          content: audioBytes,
+          // הגדרת זיהוי הדוברים חייבת להופיע בתוך ה-config של הקובץ הספציפי ב-Batch
+          config: {
+            features: {
+              enableSpeakerDiarization: true,
+              minSpeakerCount: 2,
+              maxSpeakerCount: 5
+            }
+          }
         }
       ],
       recognitionOutputConfig: {
         inlineResponseConfig: {}
       },
-      processingStrategy: 'DYNAMIC_BATCHING',
-      recognitionConfig: {
-        features: {
-          diarizationConfig: {
-            minSpeakerCount: 2,
-            maxSpeakerCount: 5
-          }
-        }
-      }
+      processingStrategy: 'DYNAMIC_BATCHING'
     };
 
-    console.log("Sending BatchRecognize request with explicit content source...");
+    console.log("Sending BatchRecognize request with Speaker Diarization enabled...");
     const [operation] = await client.batchRecognize(request);
 
+    // ניקוי קבצים זמניים
     [req.file.path, wavPath].forEach(p => fs.existsSync(p) && fs.unlinkSync(p));
 
     return res.json({
@@ -78,18 +77,29 @@ app.get("/operation/:name*", async (req, res) => {
 
     if (operation.done) {
       const results = operation.response?.results;
+      // גוגל V2 Batch מחזירה מפה שבה המפתח הוא ה-URI או "inline_data"
       const firstFileResult = results ? Object.values(results)[0] : null;
 
       return res.json({
         status: "completed",
+        done: true,
         response: firstFileResult?.inlineResult || {}
       });
     }
-    res.json({ status: "processing" });
+    res.json({ status: "processing", done: false });
   } catch (err) {
+    console.error("Polling Error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
+// Endpoint לבדיקת תקינות
+app.get("/version", (req, res) => {
+  res.json({
+    version: "2.6.0",
+    features: ["diarization", "batch-inline", "wav-conversion"]
+  });
+});
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => console.log(`Rico Worker v2.5.1 - Audio Source Fix Active`));
+app.listen(PORT, '0.0.0.0', () => console.log(`Rico Worker v2.6.0 - Diarization Active on ${PORT}`));
