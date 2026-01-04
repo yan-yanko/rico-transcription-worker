@@ -25,6 +25,8 @@ function convertToWav(inputPath, outputPath) {
 }
 
 app.post("/transcribe", upload.single("file"), async (req, res) => {
+  console.log("--- Starting Batch Transcription Request ---");
+
   try {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
@@ -32,18 +34,25 @@ app.post("/transcribe", upload.single("file"), async (req, res) => {
     await convertToWav(req.file.path, wavPath);
     const audioBytes = fs.readFileSync(wavPath).toString("base64");
 
-    // ב-V2, עבור קבצים ארוכים משתמשים ב-batchRecognize
+    // תיקון קריטי: המבנה המדויק ש-BatchRecognize דורשת עבור Inline Content
     const request = {
       recognizer: "projects/rico-482513/locations/global/recognizers/hebrew-long",
-      // ב-batchRecognize שולחים תוכן דרך inlineBatchConfig
-      content: audioBytes,
+      processingStrategy: 'DYNAMIC_BATCHING', // אופטימיזציה למהירות
+      files: [
+        {
+          content: audioBytes // שליחת התוכן ישירות בתוך מערך הקבצים
+        }
+      ],
+      // הגדרת קונפיגורציה בסיסית אם ה-Recognizer דורש זאת
+      recognitionConfig: {
+        autoDecodingConfig: {}
+      }
     };
 
-    console.log("Starting V2 Batch Recognition (LRO)...");
-
-    // זו הפונקציה הנכונה ב-V2 שמחזירה Operation
+    console.log("Sending BatchRecognize request to Google...");
     const [operation] = await client.batchRecognize(request);
 
+    // ניקוי
     [req.file.path, wavPath].forEach(p => fs.existsSync(p) && fs.unlinkSync(p));
 
     return res.json({
@@ -52,20 +61,20 @@ app.post("/transcribe", upload.single("file"), async (req, res) => {
     });
 
   } catch (err) {
-    console.error("GCP Error:", err.message);
+    console.error("GCP Detailed Error:", err);
     return res.status(500).json({ error: "Worker Error", message: err.message });
   }
 });
 
-// בדיקת סטטוס ב-V2
 app.get("/operation/:name*", async (req, res) => {
   try {
     const operationName = req.params.name + req.params[0];
-    // ב-V2 ניגשים לסטטוס דרך ה-operations client הכללי
     const [operation] = await client.checkBatchRecognizeProgress(operationName);
 
     if (operation.done) {
-      return res.json({ status: "completed", response: operation.response });
+      // ב-Batch V2 התוצאה נמצאת תחת results של הקובץ הראשון
+      const results = operation.response?.results || {};
+      return res.json({ status: "completed", response: results });
     }
     res.json({ status: "processing" });
   } catch (err) {
@@ -74,4 +83,4 @@ app.get("/operation/:name*", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => console.log(`Rico V2-LRO Worker active on ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`Rico Batch-Inline Worker active on ${PORT}`));
