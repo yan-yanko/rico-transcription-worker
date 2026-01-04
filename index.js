@@ -12,45 +12,34 @@ const client = new v2.SpeechClient(credentialsJSON ? { credentials: JSON.parse(c
 
 const upload = multer({ dest: "/tmp" });
 
-function convertToWav(inputPath, outputPath) {
-  return new Promise((resolve, reject) => {
-    ffmpeg(inputPath)
-      .audioChannels(1)
-      .audioFrequency(16000)
-      .format("wav")
-      .on("end", resolve)
-      .on("error", reject)
-      .save(outputPath);
-  });
-}
-
 app.post("/transcribe", upload.single("file"), async (req, res) => {
-  console.log("--- Starting Batch Transcription (Final Protocol) ---");
-
   try {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
     const wavPath = `${req.file.path}.wav`;
-    await convertToWav(req.file.path, wavPath);
+    // המרה ל-WAV (16kHz, Mono) - מבטיח תאימות מקסימלית ל-V2
+    await new Promise((resolve, reject) => {
+      ffmpeg(req.file.path).audioChannels(1).audioFrequency(16000).format("wav").on("end", resolve).on("error", reject).save(wavPath);
+    });
+
     const audioBytes = fs.readFileSync(wavPath).toString("base64");
 
-    // המבנה המדויק ל-BatchRecognize בגרסה V2
+    // תיקון מבנה ה-Request עבור BatchRecognize V2 Inline
     const request = {
       recognizer: "projects/rico-482513/locations/global/recognizers/hebrew-long",
       files: [
         {
+          // ב-V2 חובה להגדיר content בתוך אובייקט הקובץ
           content: audioBytes
         }
       ],
-      // פתרון השגיאה הנוכחית: הגדרת יעד הפלט כ-Inline
       recognitionOutputConfig: {
         inlineResponseConfig: {}
       },
-      // הגדרות עיבוד נוספות למהירות ודיוק
       processingStrategy: 'DYNAMIC_BATCHING'
     };
 
-    console.log("Sending BatchRecognize with inlineResponseConfig...");
+    console.log("Sending BatchRecognize request...");
     const [operation] = await client.batchRecognize(request);
 
     // ניקוי קבצים
@@ -62,18 +51,19 @@ app.post("/transcribe", upload.single("file"), async (req, res) => {
     });
 
   } catch (err) {
-    console.error("GCP Detailed Error:", err);
+    console.error("GCP Error:", err.message);
     return res.status(500).json({ error: "Worker Error", message: err.message });
   }
 });
 
+// אחידות בבדיקת הסטטוס
 app.get("/operation/:name*", async (req, res) => {
   try {
     const operationName = req.params.name + req.params[0];
     const [operation] = await client.checkBatchRecognizeProgress(operationName);
 
     if (operation.done) {
-      // ב-V2 Inline, התוצאה נמצאת בתוך inline_result של הקובץ הראשון
+      // חילוץ התוצאות מהמבנה המורכב של V2 Batch
       const results = operation.response?.results;
       const firstFileResult = results ? Object.values(results)[0] : null;
 
@@ -89,4 +79,4 @@ app.get("/operation/:name*", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => console.log(`Rico Final V2 Worker active on ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`Rico Worker V2.5 Active`));
