@@ -12,25 +12,33 @@ const client = new v2.SpeechClient(credentialsJSON ? { credentials: JSON.parse(c
 
 const upload = multer({ dest: "/tmp" });
 
+function convertToWav(inputPath, outputPath) {
+  return new Promise((resolve, reject) => {
+    ffmpeg(inputPath)
+      .audioChannels(1)
+      .audioFrequency(16000)
+      .format("wav")
+      .on("end", resolve)
+      .on("error", reject)
+      .save(outputPath);
+  });
+}
+
 app.post("/transcribe", upload.single("file"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
     const wavPath = `${req.file.path}.wav`;
-    // המרה ל-WAV (16kHz, Mono) - מבטיח תאימות מקסימלית ל-V2
-    await new Promise((resolve, reject) => {
-      ffmpeg(req.file.path).audioChannels(1).audioFrequency(16000).format("wav").on("end", resolve).on("error", reject).save(wavPath);
-    });
-
+    await convertToWav(req.file.path, wavPath);
     const audioBytes = fs.readFileSync(wavPath).toString("base64");
 
-    // תיקון מבנה ה-Request עבור BatchRecognize V2 Inline
+    // תיקון קריטי לשגיאת "No audio source set":
+    // ב-V2 Batch, חובה שכל אובייקט במערך ה-files יכיל את השדה 'content'
     const request = {
       recognizer: "projects/rico-482513/locations/global/recognizers/hebrew-long",
       files: [
         {
-          // ב-V2 חובה להגדיר content בתוך אובייקט הקובץ
-          content: audioBytes
+          content: audioBytes // זה מקור האודיו שגוגל חיפשה ולא מצאה
         }
       ],
       recognitionOutputConfig: {
@@ -39,10 +47,9 @@ app.post("/transcribe", upload.single("file"), async (req, res) => {
       processingStrategy: 'DYNAMIC_BATCHING'
     };
 
-    console.log("Sending BatchRecognize request...");
+    console.log("Sending BatchRecognize request with explicit content source...");
     const [operation] = await client.batchRecognize(request);
 
-    // ניקוי קבצים
     [req.file.path, wavPath].forEach(p => fs.existsSync(p) && fs.unlinkSync(p));
 
     return res.json({
@@ -56,14 +63,12 @@ app.post("/transcribe", upload.single("file"), async (req, res) => {
   }
 });
 
-// אחידות בבדיקת הסטטוס
 app.get("/operation/:name*", async (req, res) => {
   try {
     const operationName = req.params.name + req.params[0];
     const [operation] = await client.checkBatchRecognizeProgress(operationName);
 
     if (operation.done) {
-      // חילוץ התוצאות מהמבנה המורכב של V2 Batch
       const results = operation.response?.results;
       const firstFileResult = results ? Object.values(results)[0] : null;
 
@@ -79,4 +84,4 @@ app.get("/operation/:name*", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => console.log(`Rico Worker V2.5 Active`));
+app.listen(PORT, '0.0.0.0', () => console.log(`Rico Worker v2.5.1 - Audio Source Fix Active`));
